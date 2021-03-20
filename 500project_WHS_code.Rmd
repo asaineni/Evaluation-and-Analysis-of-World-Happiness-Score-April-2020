@@ -1,0 +1,413 @@
+---
+title: "500 Project - World Happiness Score"
+author: 'Group 3 - Akhila Saineni, Nihar Garlapati, Pranitha Chandra '
+date: "4/12/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r loading}
+#Loading required libraries
+library(readr)
+library(DataExplorer)
+library(corrplot)
+library(caret)
+library(Metrics)
+library(ggplot2)
+
+#Loading the dataset
+whs_data=read_csv("500project_WHS_dataset.csv")
+
+#Renaming long column names
+names(whs_data)
+colnames(whs_data) = c("rank", "country", "score", "gdp", "socialsup", "lifexp", "freedom",
+                       "generosity", "corruption", "region", "continent")
+
+#Viewing data
+str(whs_data)
+summary(whs_data)
+head(whs_data)
+```
+
+## Data Screening 
+
+```{r Data Screening}
+#Checking Data Accuracy and Missing values
+#Data looks accurate and with no missing values
+summary(whs_data)
+apply(whs_data,2,function(x) sum(is.na(x)))
+
+#Checking for outliers through boxplots and mahalanobis method
+boxplot(whs_data$gdp, main = "Boxplot of GDP")$out
+boxplot(whs_data$socialsup,main = "Boxplot of Social Support")$out 
+boxplot(whs_data$lifexp,main = "Boxplot of Life Expectiency")$out 
+boxplot(whs_data$freedom,main = "Boxplot ofFreedom to make Life Choices")$out 
+boxplot(whs_data$generosity,main = "Boxplot of Genorosity")$out 
+boxplot(whs_data$corruption,main = "Boxplot of Perceptions of Corruption")$out
+
+outliers_mahal = mahalanobis(whs_data[ , 3:9],
+                             colMeans(whs_data[, 3:9],na.rm=TRUE),
+                             cov(whs_data[, 3:9], use ="pairwise.complete.obs")
+)
+
+outliers_mahal
+
+cutoff = qchisq(1 - .001, ncol(whs_data[ , 3:9]))
+print(cutoff)
+
+summary(outliers_mahal < cutoff)
+#Output gives two outliers
+
+#Dataset with only outliers
+whs_outliers = subset(whs_data, outliers_mahal > cutoff)
+#Dataset without outliers
+whs_nooutliers = subset(whs_data, outliers_mahal < cutoff)
+```
+
+## Data Assumptions 
+
+```{r dataassumptions}
+#Linearity 
+linearity = rchisq(nrow(whs_nooutliers[ , 3:9]), 7)
+model = lm(linearity~., data = whs_nooutliers[ , 3:9])
+summary(model)
+
+plot(model,2)
+
+#Normality 
+standardized = rstudent(model)
+hist(standardized, breaks = 15)
+
+#Homogeneity and Homoscedasticity
+plot(model, 1)
+```
+
+Data Assumptions
+Linearity - From the plot, it looks like most of the data lies on the line and all or most of the values are centered around zero lie on the line whereas the points at the tails deviate away from the tail. Hence, meeting the assumption of linearity.
+Normality - Considering the standardized histogram for the whole dataset of iris, it can be said that the distribution is concentrated with values centered around 0 between -1 and +1 but the spread doesn’t seem to be even around zero since the x-axis ranges from -2 to 0 to 5. Hence, the assumption of normality is not met.
+Homogeneity - The spread above the line is same as that below 0,0 line in both the directions, the points look random meeting the assumption of homogeneity.
+Homoscedasticity - The spread looks equal all the way across x-axis. The dots look like a bunch of random dots and do not form lumps or identified shapes hence meeting the assumption of homoscedasticity.
+
+## Exploratory Data Analysis
+
+```{r exploratory Data Analysis}
+whs_data = whs_nooutliers
+
+#Distribution of dataset
+plot_histogram(whs_data)
+
+#Distribution of variable score 
+hist(whs_data$score, breaks = 25, probability = T, col = "lightgreen") 
+lines(density(whs_data$score), col = "blue", lwd = 2)
+#The distribution of variable score looks multimodal, platykurtic and 
+#slightly negatively skewed.
+
+table(is.na(whs_data)) 
+#there are no missing values
+
+#Plot of Average Score Vs Continent
+cleanup = theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank(),
+                axis.line.x = element_line(color = 'black'),
+                axis.line.y = element_line(color = 'black'),
+                legend.key = element_rect(fill = 'lightgrey'),
+                text = element_text(size = 15),
+                axis.text.x = element_text(size  = 10, angle = 45, hjust = 1, vjust = 1))
+
+bargraph = ggplot(whs_data, aes(reorder(continent, -score), score, 
+                                  color = continent, fill = continent))
+
+bargraph +
+  stat_summary(fun.y = mean, ##adds the points
+               geom = "point") +
+  stat_summary(fun.y = mean, ##adds the line
+               geom = "bar",
+               aes(group=1)) +
+  stat_summary(fun.y = mean, ##adds the line
+               geom = "line",
+               aes(group=1)) +
+  stat_summary(fun.data = mean_cl_normal, ##adds the error bars
+               geom = "errorbar", 
+               width = .2) +
+  xlab("Continents of the World") +
+  ylab("Average Happiness Score") +
+  labs(title = "BarGraph of Happiness Score and World Continents") + 
+  cleanup 
+#the bargraph shows that on an average the happiness score for Australia is 
+#highest whereas happiness score for Asia and Africa is least of all.
+
+# Plot of  Score Vs Region
+scatterplot_1 = ggplot(whs_data, aes(reorder(region, -score), score, 
+                     fill = region,
+                     color = region))
+
+scatterplot_1 + 
+  scale_x_discrete(labels = abbreviate) +
+  geom_point() +
+  xlab("Regions of the World") +
+  ylab("Happiness Score") + 
+  labs(title = "Scatterplot of Happiness Score across Regions") +
+  cleanup
+#the scatter plot shows the distribution of the happiness score across various regions 
+```
+
+## Correlational Analysis
+
+```{r correlation}
+#Plotting Correlation of response variable with explanatory varibales.
+#par(mfrow=c(1,1))
+#corrplot(cor(whs_data[ , -c(2,10:11)]))
+#symnum(cor(whs_data[ , -2]))
+
+#Finding the correlation without the rank variable and categorical variables
+#par(mfrow=c(1,1))
+corrplot(cor(whs_data[ , c(-1, -2, -10, -11)]))
+corrplot(cor(whs_data[ , c(-1, -2, -10, -11)]), method = "number")
+#symnum(cor(whs_data[ , c(-1, -2)]))
+#Looks like all the numeric variables are positively correlated with score.
+
+#Scatter Plots with Regression Line
+scatterplot_2 = 
+  ggplot(whs_data, 
+         aes(x = gdp, y = score)) + 
+  geom_point(aes(color=continent), 
+             size = 3, 
+             alpha = 0.8) +  
+  geom_smooth(aes(color = continent, 
+                  fill = continent), 
+              method = "lm", 
+              fullrange = TRUE)+   
+  facet_wrap(~continent) + 
+  theme_bw() + 
+  labs(title = "Scatter plot of GDP vs HappinessScore for Countries with regression line") +
+  cleanup
+scatterplot_2
+
+scatterplot_3 = 
+  ggplot(whs_data, aes(x = lifexp, y = score)) + 
+  geom_point(aes(color=continent), 
+             size = 3, 
+             alpha = 0.8) +  
+  geom_smooth(aes(color = continent, 
+                  fill = continent), 
+              method = "lm", 
+              fullrange = TRUE) +
+  facet_wrap(~continent) +
+  theme_bw() + 
+  labs(title = "Scatter plot of LifeExpectancy vs HappinessScore for Countries with regression line") +
+  cleanup
+scatterplot_3
+```
+
+## Analysis of Variance (ANOVA) and PostHoc (Bonferonni Correction)
+
+```{r anova}
+#Initializing the dataset
+whs_anova = whs_data
+
+#Anova test
+library("ez")
+
+whs_anova$no <- 1:nrow(whs_anova)
+
+ezANOVA(data = whs_anova,
+        dv = score,
+        between = continent,
+        wid = no,
+        type = 3,
+        detailed = T)
+
+ezANOVA(data = whs_anova,
+        dv = score,
+        between = region,
+        wid = no,
+        type = 3,
+        detailed = T)
+
+#Since the p value of the anova test is less than 0.05. We can consider that the Anova test is significant, therefore we reject the null hypothesis and conclude that there is a difference in the average happiness score between different continents and regions. Also from the levene's test, the p-values are greater than 0.05 indicating that the variances are equal among both the continents and regions.
+
+#Bonferroni correction
+post_continents = pairwise.t.test(whs_anova$score,
+                        whs_data$continent, 
+                        p.adjust.method = "bonferroni", 
+                        paired = F, 
+                        var.equal = T)
+
+post_continents
+#There is a significant difference in the score between continents with higher number of developing nations such as asia, africa when compared to continents with fewer developing nations such as europe or north america
+```
+
+## Splitting the dataset
+
+```{r split}
+#Splitting the dataset into Train(75%) and Test(25%) data for Modelling and Prediction
+set.seed(100)
+smp_size = floor(0.75 * nrow(whs_data))
+train_ind = sample(seq_len(nrow(whs_data)), size = smp_size)
+
+train_data = whs_data[train_ind, ]
+test_data = whs_data[-train_ind, ]
+```
+
+## Multiple Linear Regression Modelling
+
+```{r MLR}
+#Building models without rank and score.
+#Model1 includes all the variables as predictor variables
+model_all = lm(score ~ ., data = train_data[ , c(-1, -2)])
+summary(model_all)
+prediction_all = predict(model_all, newdata = test_data)
+mean((prediction_all - test_data$score)^2)
+RMSE(prediction_all, test_data$score)
+R2(prediction_all, test_data$score)
+AIC(model_all)
+BIC(model_all)
+confint(model_all)
+summary(prediction_all)
+
+plot(test_data$score, main = "Linear Model", ylab = "Test Set Scores", pch = 20)
+points(predict(model_all, newdata = test_data), col = "red", pch = 20)
+
+names(train_data)
+
+#Running Backward Stepwise elimination 
+#Removing Region and Continent variable from the process as they were of low or no importance in the model_all at all
+#STEP1
+model_1 = lm(score ~ socialsup+lifexp+freedom+generosity+corruption, 
+             data = train_data[ , c(-1, -2)])
+#summary(model_1)
+
+model_2 = lm(score ~ gdp+lifexp+freedom+generosity+corruption, 
+             data = train_data[ , c(-1, -2)])
+#summary(model_2)
+
+model_3 = lm(score ~ gdp+socialsup+freedom+generosity+corruption, 
+             data = train_data[ , c(-1, -2)])
+#summary(model_3)
+
+model_4 = lm(score ~ gdp+socialsup+lifexp+generosity+corruption, 
+             data = train_data[ , c(-1, -2)])
+#summary(model_4)
+
+#*************************************************************
+#FINAL REGRESSION MODEL
+model_5 = lm(score ~ gdp+socialsup+lifexp+freedom+corruption, 
+             data = train_data[ , c(-1, -2)])
+summary(model_5)
+#*************************************************************
+
+model_6 = lm(score ~ gdp+socialsup+lifexp+freedom+generosity, 
+             data = train_data[ , c(-1, -2)])
+#summary(model_6)
+
+
+#STEP2
+model_51 = lm(score ~ socialsup+lifexp+freedom+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_51)
+
+model_52 = lm(score ~ gdp+lifexp+freedom+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_52)
+
+model_53 = lm(score ~ gdp+socialsup+freedom+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_53)
+
+model_54 = lm(score ~ gdp+socialsup+lifexp+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_54)
+
+model_55 = lm(score ~ gdp+socialsup+lifexp+freedom,
+              data = train_data[ , c(-1, -2)])
+#summary(model_55)
+
+
+#STEP3
+model_551 = lm(score ~ socialsup+lifexp+freedom,
+              data = train_data[ , c(-1, -2)])
+#summary(model_551)
+
+model_552 = lm(score ~ gdp+freedom+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_552)
+
+model_553 = lm(score ~ gdp+socialsup+corruption,
+              data = train_data[ , c(-1, -2)])
+#summary(model_553)
+
+model_554 = lm(score ~ gdp+socialsup+lifexp,
+              data = train_data[ , c(-1, -2)])
+#summary(model_554)
+
+
+#STEP4
+model_5511 = lm(score ~ lifexp+freedom,
+              data = train_data[ , c(-1, -2)])
+#summary(model_5511)
+
+model_5512 = lm(score ~ socialsup+freedom,
+              data = train_data[ , c(-1, -2)])
+#summary(model_5512)
+
+model_5513 = lm(score ~ socialsup+lifexp,
+              data = train_data[ , c(-1, -2)])
+#summary(model_5513)
+
+#STEP5
+model_55111 = lm(score ~ freedom,
+              data = train_data[ , c(-1, -2)])
+#summary(model_55111)
+
+model_55112 = lm(score ~ lifexp,
+              data = train_data[ , c(-1, -2)])
+#summary(model_55112)
+
+
+#Checking if the same model(final regression model) is obtained using Step function
+lm1 = lm(score ~ ., data = train_data[ , c(-1, -2, -10, -11)])
+summary(lm1)
+#The model obtained is same as the model obtained in the backward stepwise regression
+slm1 <- step(lm1)
+summary(slm1)
+slm1$anova
+#output model provided score ~ gdp + socialsup + lifexp + freedom + corruption 
+#i.e. model without generosity
+```
+
+## Residual plots of Model5
+
+```{r residuals}
+par(mfrow= c(2,2))
+plot(model_5, col = "yellow")
+```
+
+## Prediction Model 
+
+```{r prediction}
+#Checking the Predictive ability of the model
+plot(test_data$score, main = "Linear Model - Actual Vs Predicted", ylab = "Test Set Scores",
+     pch = 20)
+prediction_model5 = predict(model_5, newdata = test_data)
+points(prediction_model5, col = "red", pch = 20)
+
+mean((prediction_model5 - test_data$score)^2)
+RMSE(prediction_model5, test_data$score)
+R2(prediction_model5, test_data$score)
+AIC(model_5)
+BIC(model_5)
+confint(model_5)
+summary(model_5)
+```
+
+
+
+
